@@ -1,0 +1,29 @@
+K 25
+svn:wc:ra_dav:version-url
+V 33
+/svn/ff-extension/!svn/ver/46/src
+END
+install.rdf
+K 25
+svn:wc:ra_dav:version-url
+V 45
+/svn/ff-extension/!svn/ver/31/src/install.rdf
+END
+eventlogger.kpf
+K 25
+svn:wc:ra_dav:version-url
+V 49
+/svn/ff-extension/!svn/ver/30/src/eventlogger.kpf
+END
+chrome.manifest
+K 25
+svn:wc:ra_dav:version-url
+V 48
+/svn/ff-extension/!svn/ver/5/src/chrome.manifest
+END
+Makefile
+K 25
+svn:wc:ra_dav:version-url
+V 41
+/svn/ff-extension/!svn/ver/5/src/Makefile
+END

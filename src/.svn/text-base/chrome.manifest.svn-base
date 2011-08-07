@@ -1,0 +1,6 @@
+content   eventlogger              jar:chrome/eventlogger.jar!/content/
+content   eventlogger              jar:chrome/eventlogger.jar!/content/ contentaccessible=yes
+skin      eventlogger  classic/1.0 jar:chrome/eventlogger.jar!/skin/
+locale    eventlogger  en-US       jar:chrome/eventlogger.jar!/locale/en-US/
+
+overlay chrome://browser/content/browser.xul  chrome://eventlogger/content/browserOverlay.xul

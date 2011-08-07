@@ -1,0 +1,69 @@
+<?xml version="1.0"?>
+<!-- 
+  **** BEGIN LICENSE BLOCK ****
+  Copyright(c) 2010 Jay Chen
+  
+  This program is free software; you can redistribute it and/or modify it under
+  the terms of the GNU General Public License as published by the Free
+  Software Foundation; either version 2 of the License, or (at your option) 
+  any later version.
+
+  This program is distributed in the hope that it will be useful, but 
+  WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY 
+  or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for 
+  more details.
+  
+  You should have received a copy of the GNU General Public License along with
+  this program; if not, write to the Free Software Foundation, Inc., 59 Temple
+  Place, Suite 330, Boston, MA 02111-1307 USA
+  **** END LICENSE BLOCK ****
+-->
+
+<?xml-stylesheet type="text/css" href="chrome://global/skin/" ?>
+<?xml-stylesheet type="text/css"
+  href="chrome://eventlogger/skin/browserOverlay.css" ?>
+
+<!DOCTYPE overlay SYSTEM
+  "chrome://eventlogger/locale/browserOverlay.dtd">
+  
+<overlay id="xulschoolhello-browser-overlay"
+  xmlns="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul">
+
+  <script type="application/x-javascript"
+    src="chrome://eventlogger/content/browserOverlay.js" />
+  <script type="application/x-javascript">
+    <![CDATA[
+      window.addEventListener("load", elf.startHeaderInfo, false);
+      window.addEventListener("unload", elf.stopHeaderInfo, false);
+      
+      
+      var appcontent = window.document.getElementById("appcontent");
+      if (appcontent) {
+        appcontent.addEventListener("DOMContentLoaded", doPrefetch, false);
+      }
+      //window.addEventListener("DOMContentLoaded", update_cache_status, false);
+    ]]>
+  </script>
+  
+  <stringbundleset id="stringbundleset">
+    <stringbundle id="xulschoolhello-string-bundle"
+      src="chrome://eventlogger/locale/browserOverlay.properties"/>
+  </stringbundleset>
+  
+  <menupopup id="menu_ToolsPopup">
+    <menu id="xs-hw-hello-menu" label="&xulschoolhello.helloMenu.label;"
+      accesskey="&xulschoolhello.helloMenu.accesskey;"
+      insertafter="javascriptConsole,devToolsSeparator">
+      <menupopup>
+      <menuitem id="xulschoolhello-hello-menu-item"
+                label="&xulschoolhello.helloItem.label;"
+                accesskey="&xulschoolhello.helloItem.accesskey;"
+                oncommand="elf.oHeaderInfo.saveAll();" />
+      <menuitem id="xulschoolhello-findlinks-menu-item"
+                label="&xulschoolhello.findLinks.label;"
+                accesskey="&xulschoolhello.findLinks.accesskey;"
+                oncommand="elf.oHeaderInfo.linkTargetFinder();" />
+      </menupopup>
+    </menu>
+  </menupopup>
+</overlay>

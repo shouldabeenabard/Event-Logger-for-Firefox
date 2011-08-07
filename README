@@ -1,0 +1,33 @@
+Event Logger for Firefox (ELF)
+
+Event Logger is a Firefox extension that logs various browsing statistics and reports them back to a central server for analysis. It is a useful client-side logging tool for researchers to understand browsing behavior.
+
+ 
+
+The purpose of this research project is threefold: First, we aim to understand browsing behavior in the developing world due to network and power constraints. We expect that these access patterns will be different from those in well connected regions due to power outages and/or bandwidth constraints. Second, this extension tests the efficacy of simple caching and prefetching in these challenging networking conditions. We expect that the availability of the offline cache in addition to a simple prefetching algorithm will improve the information available to the user during outages, but slightly. Third, we would like to test more intelligent prefetching algorithms and measure the improvement if any over the naive prefetching algorithm. This extension and the recorded information is strictly for research purposes.
+
+For researchers, ELF may be easily extended to different research purposes and environments.
+
+Information Recorded and Transmitted
+
+We do not record more information than what existing extensions such as Google toolbar already does. We also do not record personal information such as contents of requested pages or FORM data.
+IP Address
+Disk cache size
+Each HTTP Request and Response
+Time
+Request/Response Headers
+Cache headers
+Size
+Prefetched
+Requests
+Completed
+Events
+Online/offline status
+Idle/back status
+Page load/completion
+
+Security and Privacy
+
+The information that we are gathering regarding browsing behavior is the same information visible on the wire during in HTTP headers. Also, no page content data is ever recorded or transmitted. We therefore do not encrypt the transmission of this information back to our central server.
+
+We recognize that privacy is important. We only process the gathered information for the purposes of research. Aggregate findings based upon our logs may be published without restriction. Per-user results will only be published anonymously. We will not share the gathered information with third parties except aggregate information. All other information will remain confidential, and in the event that this privacy policy changes we will provide notice and request consent.

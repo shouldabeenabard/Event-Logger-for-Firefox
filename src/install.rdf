@@ -1,0 +1,21 @@
+<?xml version="1.0"?>
+<RDF:RDF xmlns:em="http://www.mozilla.org/2004/em-rdf#"
+         xmlns:NC="http://home.netscape.com/NC-rdf#"
+         xmlns:RDF="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+  <RDF:Description RDF:about="urn:mozilla:install-manifest"
+                   em:id="jchen@cs.nyu.edu"
+                   em:name="Event Logger"
+                   em:description="Logs events such as page request/responses, monitors cache activity, and reports back to a central server."
+                   em:version="0.2"
+                   em:creator="Jay Chen"
+                   em:homepageURL="http://cs.nyu.edu/~jchen/projects/"
+                   em:type="2"
+                   em:updateURL="http://crash.cs.nyu.edu/update.rdf"
+                   em:updateKey="MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQCtbuD0QuhMNPYKrBUB+PHa+0Yy2f7Gf00P3bdFOiHw9hcq7xuc14u8mcTEkQn3PcfJtkqrWUdgVgdTkvPL0q9+x9NHZnvFpoKZYb0KrfKFKxWWEgsMiR2D9c0kq0NedElphBHcSIdAYqGYqxq7dYDmV8HOlwLnVuvwFQ7NfDsv+QIDAQAB">
+    <em:targetApplication RDF:resource="rdf:#$ukI9z1"/>
+  </RDF:Description>
+  <RDF:Description RDF:about="rdf:#$ukI9z1"
+                   em:id="{ec8030f7-c20a-464f-9b0e-13a3a9e97384}"
+                   em:minVersion="3.6.3"
+                   em:maxVersion="3.6.*" />
+</RDF:RDF>
