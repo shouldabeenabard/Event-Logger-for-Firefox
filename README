@@ -26,6 +26,9 @@ Online/offline status
 Idle/back status
 Page load/completion
 
+Optional personal data collection:
+You may enable the optional component for collecting individual credentials alongside the event information. This will display a login prompt prior to loading the browser. Once the user agrees supplies credentials, the logging information is associated with that credentials. You might want to change what data is collected by looking at its implementation.
+
 Security and Privacy
 
 The information that we are gathering regarding browsing behavior is the same information visible on the wire during in HTTP headers. Also, no page content data is ever recorded or transmitted. We therefore do not encrypt the transmission of this information back to our central server.

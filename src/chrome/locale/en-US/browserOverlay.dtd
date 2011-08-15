@@ -1,6 +1,10 @@
-<!ENTITY xulschoolhello.helloMenu.label            "Event Logger">
+<!ENTITY xulschoolhello.helloMenu.label        "Event Logger">
 <!ENTITY xulschoolhello.helloMenu.accesskey    "E">
 <!ENTITY xulschoolhello.helloItem.label        "Export Logs">
 <!ENTITY xulschoolhello.helloItem.accesskey    "E">
 <!ENTITY xulschoolhello.findLinks.label        "Refresh Cached Links">
 <!ENTITY xulschoolhello.findLinks.accesskey    "R">
+<!ENTITY xulschoolhello.deployCompany.label    "<Your Company>">
+<!ENTITY xulschoolhello.loginGreet.label       "<Login greeting>">
+<!ENTITY xulschoolhello.userId1Name.label      "Enter Your Email ID">
+<!ENTITY xulschoolhello.userId2Name.label      "Enter Your Mobile Number">

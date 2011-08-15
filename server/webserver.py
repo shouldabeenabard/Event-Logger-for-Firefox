@@ -2,7 +2,10 @@
 import sys, os
 import string,cgi,time
 from BaseHTTPServer import BaseHTTPRequestHandler, HTTPServer
+from SocketServer import ThreadingMixIn
+import threading
 import pickle
+import random
 import time
 import pdb
 # need python 3.02 i think for urllib
@@ -22,10 +25,9 @@ def parse_params(query):
 
 nextMachineID = 0
 ackedEventIDs = {}
-eventEntries = {}
 
 class RequestEntry():
-    def __init__(self, sourceaddr, version, machineID, timestamp, windowID, eventID, URL, eventCode, clockSkew):
+    def __init__(self, sourceaddr, version, machineID, timestamp, windowID, eventID, URL, eventCode, user_id1, user_id2, user_site, clockSkew):
         self.sourceaddr = sourceaddr
         self.version = version 
         self.machineID = machineID
@@ -34,10 +36,13 @@ class RequestEntry():
         self.eventID = eventID 
         self.URL = URL
         self.eventCode = eventCode 
+        self.user_id1 = user_id1
+        self.user_id2 = user_id2
+        self.user_site = user_site
         self.clockSkew = clockSkew
 
         #self.reqHeaders = [];
-        self.headers = [];
+        self.headers = [];                  #AMR: this could also be mTimeTabs start/stop/window information
     def get_header(self, headerkey):
         for header in self.headers:
             if header.find(headerkey) > -1:
@@ -45,21 +50,6 @@ class RequestEntry():
         return None
     # XXX: ignore duplicates untested
     def add_header(self, header):
-        # get the header's key
-        headerkey = ""
-        #headerchunks = header.split(':')
-        #if len(headerchunks) > 1:
-        #    headerkey = headerchunks[0]
-        #else:
-        #    # JJJ: first line of header can have no key
-        #    pass
-        #    # if the key cannot be found, ignore the add header 
-        #    # return
-        ## if the key already exists, ignore the duplicate add header 
-        #if self.get_header(headerkey):
-        #    return
-
-        # add the header
         self.headers.append(header + "\r\n")
     def get_string(self):
         data = str(self.timestamp) + " " + self.sourceaddr + " " + str(self.machineID) + " " + str(self.windowID) + " " + str(self.eventID) + " " + self.URL + " " + self.eventCode + "\r\n"
@@ -118,13 +108,14 @@ class MyHandler(BaseHTTPRequestHandler):
     # goes through all the data, parses into RequestEntry objects and inserts them into the big dict
     def parse_data(self, sourceaddr, version, machineID, windowID, data, clockSkew):
         global ackedEventIDs
-        global eventEntries 
         # chop the data into chunk entires based on the \r\n's
         receivedEventEntries = 0
         receivedRequestEntries = 0
         receivedResponseEntries = 0
         initEntry = False 
         currentEntry = None
+        parsedEntries = {}
+        biggestEventID = -2;
         for line in data.split('\r\n'):
             #print line
             try:
@@ -133,14 +124,17 @@ class MyHandler(BaseHTTPRequestHandler):
                     if initEntry == False:
                         initEntry = True
                         chunks = line.split()
-                        if len(chunks) == 5:
+                        if len(chunks) == 8:
                             timestamp = int(chunks[0])
                             windowID = int(chunks[1]) 
                             eventID = int(chunks[2])
                             URL = chunks[3]
                             eventCode = chunks[4]
+                            user_id1 = chunks[5]
+                            user_id2 = chunks[6]
+                            user_site = chunks[7]
 
-                            currentEntry = RequestEntry(sourceaddr, version, machineID, timestamp, windowID, eventID, URL, eventCode, clockSkew)
+                            currentEntry = RequestEntry(sourceaddr, version, machineID, timestamp, windowID, eventID, URL, eventCode, user_id1, user_id2, user_site, clockSkew)
                             #print currentEntry.get_string()
                             #pdb.set_trace()
                             if eventCode == "REQUEST":
@@ -158,32 +152,22 @@ class MyHandler(BaseHTTPRequestHandler):
                     else:
                         currentEntry.add_header(line)
                 else:
-                    # save the old entry
+                    # save the old entry #AMR: Quit this, save to a temporary dictionary, return it
                     if currentEntry is not None:
-                        eventEntries[(machineID, windowID, currentEntry.eventID)] = currentEntry
+                        parsedEntries[(machineID, windowID, currentEntry.eventID)] = currentEntry
+                        if (currentEntry.eventID > biggestEventID):
+                            biggestEventID = currentEntry.eventID
+                        currentEntry = None
                     # make new entry
                     initEntry = False
             except:
                 print "Error: " + str(line) + "\n"
                 #pdb.set_trace()
-        return (receivedRequestEntries, receivedResponseEntries, receivedEventEntries)
-                
-    # returns the request IDs for a particular window
-    def get_eventIDs(self, machineID, windowID):
-        global eventEntries 
-        eventIDs = []
-        for entry in eventEntries.values():
-            if entry.windowID == windowID:
-                if entry.machineID == machineID:
-                    eventIDs.append(entry.eventID)
-        # sort them for free
-        eventIDs.sort(lambda x,y: y-x)
-        return eventIDs
-            
+        return (parsedEntries, biggestEventID, receivedRequestEntries, receivedResponseEntries, receivedEventEntries)
+                           
     def do_POST(self):
         global ackedEventIDs
-        global eventEntries 
-        #global rootnode
+        
         try:
             #print str(time.time()) + " " + self.path
             #print str(time.time()) + " " + self.headers
@@ -207,16 +191,20 @@ class MyHandler(BaseHTTPRequestHandler):
             #if ctype == 'application/x-www-form-urlencoded':
                 # grab the data and parse it
                 data = self.rfile.read(length)
-                (receivedRequestEntries, receivedResponseEntries, receivedEventEntries) = self.parse_data(sourceaddr, clientVersion, machineID, windowID, data, clockSkew)
+                (parsedEntries, biggestEventID, receivedRequestEntries, receivedResponseEntries, receivedEventEntries) = self.parse_data(sourceaddr, clientVersion, machineID, windowID, data, clockSkew)
 
                 #pdb.set_trace()
                 # get and update the last ack'd eventID
-                lastAckedID = ackedEventIDs[(machineID, windowID)]
-                eventIDs = self.get_eventIDs(machineID, windowID)
-                if len(eventIDs) > 0:
-                    lastAckedID = eventIDs[0]
-                    ackedEventIDs[(machineID, windowID)] = lastAckedID
-                
+                # AMR: for the (machineID, windowID) key, if the current eventID is greater, then update it
+                lastAckedID = ackedEventIDs.get((machineID, windowID),-1)
+                if (biggestEventID > lastAckedID):
+                    ackedEventIDs[(machineID, windowID)] = biggestEventID
+                    
+                #AMR: then write the data out to file
+                try:
+                    save_posted_events(parsedEntries)
+                except:
+                    print "ERROR 2: Problem writing postedEnteries to file"
                 # return OK response
                 self.send_response(301)
                 self.end_headers()
@@ -243,34 +231,45 @@ class MyHandler(BaseHTTPRequestHandler):
             print "Error: " + str(self.headers) + "\n"
             #pdb.set_trace()
 
-# save db
+# save temp dict
+def save_posted_events(toSaveDict):
+    save_dir = "pickles/"
+    if not os.path.exists(save_dir):
+        os.makedirs(save_dir)
+    filename = str(int(time.time())) + "_" + str(random.randint(10,99)) + ".pickle"
+    dumpfile = open(save_dir + filename, 'w')
+    pickle.dump(toSaveDict, dumpfile)
+    dumpfile.close()
+    
+# save db    
 def save_db(filename, db):
   dumpfile = open(filename, 'w')
   pickle.dump(db, dumpfile)
   dumpfile.close()
+  
+class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
+    """Handle requests in a separate thread."""  
 
 def main():
     global nextMachineID 
     global ackedEventIDs
-    global eventEntries 
+    
     try:
-        server = HTTPServer(('', 8081), MyHandler)
+        server = ThreadedHTTPServer(('', 80), MyHandler)  #AMR: need to think about mutex for shared vars
         print 'searching for previous state'
         # load dbs
-        if os.path.isfile("ackedEventIDs.pickle") and os.path.isfile("eventEntries.pickle"):
+        if os.path.isfile("ackedEventIDs.pickle") and os.path.isfile("nextMachineID.pickle"):
             print 'previous state found!'
             print 'restoring state...'
             infp = open("ackedEventIDs.pickle")
             ackedEventIDs = pickle.load(infp)
             infp.close()
-            infp = open("eventEntries.pickle")
-            eventEntries = pickle.load(infp)
+            infp = open("nextMachineID.pickle")
+            nextMachineID = pickle.load(infp)
+            print "Next machine ID is " + str(nextMachineID)
+            print "Last ACKeD IDs \n"
+            print str(ackedEventIDs)
             infp.close()
-            nextMachineID = 0
-            for entry in eventEntries.values():
-                if nextMachineID <= entry.machineID:
-                    nextMachineID = entry.machineID + 1
-                print entry.get_string()
         else:
             print 'no previous state found'
         print 'started httpserver...'
@@ -280,7 +279,7 @@ def main():
         server.socket.close()
     print 'saving state...'
     save_db("ackedEventIDs.pickle", ackedEventIDs)
-    save_db("eventEntries.pickle", eventEntries)
+    save_db("nextMachineID.pickle", nextMachineID)
     print 'state saved'
 if __name__ == '__main__':
     main()
