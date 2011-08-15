@@ -1,6 +1,3 @@
-//Besme Ab Wo Wold Wo Menfes Kidus
-//Maisera w/God misera
-
 if(!elf) var elf={};
 if(!elf) elf={};
 
