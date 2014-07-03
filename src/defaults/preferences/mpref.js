@@ -1,0 +1,1 @@
+pref("extensions.mpersonal.enabled", 1);

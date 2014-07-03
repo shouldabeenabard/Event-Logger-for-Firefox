@@ -1,14 +1,19 @@
-//window.addEventListener("load", function() { elf.startHeaderInfo(); }, false);
-//window.addEventListener("load", function() { let stringBundle = document.getElementById("xulschoolhello-string-bundle"); let message = stringBundle.getString("xulschoolhello.greeting.label");window.alert(message); }, false);
-
 if(!elf) var elf={};
 if(!elf) elf={};
 
 var Started=false,StartTime,StopTime,Finished;
 
 elf.oHeaderInfo = null;
+elf.updateServer = "<Your Log Server>";     //e.g. "http://216.165.108.94:80", "http://localhost:8080",
+elf.appId = "<The App ID>";
+elf.updateEvery = 300000;                        //In milliseconds, how often update the server
+elf.commonCred = null;
+elf.considerInactiveAfter=3*60;                 //AMR: in seconds, when is user considered not looking at page.
 
 elf.startHeaderInfo = function() {
+  
+  elf.loadMpersonalCred();              //AMR: Load the acquired m personal credentials
+  elf.mTabTime.init();                  //AMR: Init the tab viewership timer
   
   elf.oHeaderInfo = new elf.HeaderInfo();
   elf.oHeaderInfo.start();
@@ -16,16 +21,24 @@ elf.startHeaderInfo = function() {
   
   //var prefManager = Components.classes["@mozilla.org/preferences-service;1"].getService(Components.interfaces.nsIPrefBranch);
   set_cache_settings();
-  
   perTabListener.start();
 }
 
+elf.loadMpersonalCred=function(){
+		Components.utils.import("resource://eventlogger/mpersonalCore.js");
+		elf.commonCred = mPersonalCred;
+        //window.alert(elf.commonCred.user_id1);
+}
+
 elf.stopHeaderInfo = function() {
+
+  elf.mTabTime.uninit();            //AMR: Uninit mTabTimer, before the events are saved up
+  
   elf.removeFromListener(elf.oHeaderInfo)
   elf.oHeaderInfo.stop();
   elf.oHeaderInfo = null;
   
-  perTabListener.start();
+  perTabListener.stop();
 }
 
 elf.addToListener = function(obj)
@@ -48,10 +61,10 @@ elf.addToListener = function(obj)
     idleService.addIdleObserver(obj, 20); // JJJ: idle time in seconds
     observerService.addObserver(obj, "prefetch-load-requested", false);
     observerService.addObserver(obj, "prefetch-load-completed", false);
-    //observerService.addObserver(obj, "sleep_notification", false);
-    //observerService.addObserver(obj, "wake_notification", false);
+
   }
 }
+
 elf.removeFromListener = function(obj)
 {
   // Unregistering listener
@@ -72,12 +85,142 @@ elf.removeFromListener = function(obj)
     idleService.removeIdleObserver(obj, 20);
     observerService.removeObserver(obj, "prefetch-load-requested");
     observerService.removeObserver(obj, "prefetch-load-completed");
-    
-    //observerService.removeObserver(obj, "sleep_notification");
-    //observerService.removeObserver(obj, "wake_notification");
   }
 }
 
+
+/****************************************************************************
+* AMR: mTab Viewership Timer
+****************************************************************************/
+elf.mTabTime = {
+	
+	window_title: "undefined",
+	window_loc:"",
+	start_trigger:"",
+	record_trigger:"",
+	idleTrigger: elf.considerInactiveAfter,
+	timeStore: null,
+	lastSelected: null,
+	
+	idleGurard : {isIdle:false, idleSince:""},
+	userIsIdle: function(){
+		return this.idleGuard.isIdle;
+	},
+		
+	init: function()
+	{
+		this.timeStore = new Array();
+		
+		var idleService = Components.classes["@mozilla.org/widget/idleservice;1"]
+                  .getService(Components.interfaces.nsIIdleService);
+		idleService.addIdleObserver(this, this.idleTrigger);		//at two minutes idle, we get called.
+		
+		window.setTimeout (function (obj) {obj.registerForEvents();}, 500, this);
+	},
+	
+	uninit: function()
+	{
+		var idleService = Components.classes["@mozilla.org/widget/idleservice;1"]
+					.getService(Components.interfaces.nsIIdleService);
+		idleService.removeIdleObserver(this, this.idleTrigger);		//remove idle observer on sianara
+		
+		this.completeRecord("PageUnload");							//finshes any ongoing log
+		this.unregisterForEvents()
+		return;
+	},
+	registerForEvents: function()
+	{
+		gBrowser.tabContainer.addEventListener('TabSelect', this, false);
+		gURLBar.addEventListener('ValueChange', this, true);		
+	},
+    
+	unregisterForEvents: function()
+	{
+		gBrowser.tabContainer.removeEventListener('TabSelect', this, false);
+		gURLBar.removeEventListener('ValueChange', this, true);
+	},    
+	
+	startRecord: function(trigger) {
+	
+		this.window_loc = gBrowser.selectedBrowser.currentURI.spec;
+		this.window_title = gBrowser.selectedBrowser.contentTitle;
+		this.start_trigger = trigger;
+		this.started = getUnixTime(new Date);
+		this.completed = "";
+	},	
+	
+	
+	completeRecord: function(trigger) {
+		if ( this.hasRecord() && this.window_loc != "about:blank") {
+        //this.window_title = gBrowser.selectedBrowser.contentTitle;
+		this.completed = getUnixTime(new Date);
+		this.record_trigger = trigger;  
+		this.logEntry();
+		}
+
+	},
+	
+	hasRecord: function() {
+		return (this.window_title != "undefined");
+	},	
+ 
+ 	clearRecord: function() {
+		this.window_title = "undefined";
+		this.window_loc="";
+		this.start_trigger="";
+		this.record_trigger="";
+		this.started="";
+		this.completed="";
+	},
+
+	logEntry: function () { 
+		if ( this.hasRecord() ) {
+            // AMR: log the start event==> note window_title will have spaces, so " " is not a good delimeter.
+            objectID = elf.oHeaderInfo.nextObjectID;
+            elf.oHeaderInfo.nextObjectID++;
+            var currTime = new Date;
+            elf.oHeaderInfo.events[objectID] =
+                new elf.EventObject(getUnixTime(currTime), elf.oHeaderInfo.windowID, objectID, this.window_loc, "MTAB_VIEW_TIME");
+            elf.oHeaderInfo.events[objectID].mAddTabTimeData(this.started, this.completed, this.window_title);
+        }		
+	},
+
+	handleEvent: function (event) {
+		switch (event.type) {
+		  case "TabSelect":
+		  case "ValueChange":
+			//check if the selected tab is the one with the ongoing record
+			//we could test/set this.lastSelected with gBrowser.selectedTab, but we care about URL more.
+			//I think both fire for a new selection, with ValueChange first, perhaps. But when the URI's are
+			//the same, we just return with no need for completion.
+			//if(mTabTime.window_title == window.content.location.href){
+			if(this.window_loc == gBrowser.selectedBrowser.currentURI.spec){
+				return;
+			}
+			else{
+				this.completeRecord(event.type);
+				this.clearRecord();
+				this.startRecord(event.type);
+			}
+			break;
+		} 
+	},
+  
+  	observe : function(aSubject, aTopic, aData) {
+		if (aTopic == "idle") {
+			this.completeRecord(aTopic);
+			this.clearRecord();
+			return;
+		}
+		
+		if (aTopic == "back"){
+			this.startRecord(aTopic);
+			return;		
+		}
+		
+	}
+  
+}
 
 /****************************************************************************
 * Per-tab Listener
@@ -166,12 +309,6 @@ var perTabListener = {
       var currTime = new Date;
       elf.oHeaderInfo.events[objectID] =
         new elf.EventObject(getUnixTime(currTime), elf.oHeaderInfo.windowID, objectID, url, "STOP_LOAD_PAGE");
-      
-      // call the link target finder
-      aWebProgress.QueryInterface(Components.interfaces.nsIWebProgress);
-      if(!aWebProgress.NS_ERROR_FAILURE) {
-        this.linkTargetFinder(aWebProgress.DOMWindow);        
-      }
     }
     return 0;
   },
@@ -179,64 +316,7 @@ var perTabListener = {
  /****************************************************************************
  * Link target finder
  ****************************************************************************/
-  linkTargetFinder: function (browsercontent) {
-    // phase 1: no link highlighting
-    if (elf.oHeaderInfo.experimentPhase == 1) {
-      return;
-    }
-    
-    // check if online, if so no link highlighting
-    prefsService = Components.classes["@mozilla.org/preferences-service;1"].getService(Components.interfaces.nsIPrefBranch);
-    isOffline = prefsService.getBoolPref("browser.offline");
-    if (!isOffline) {
-      return;
-    }
-    
-    var head = browsercontent.document.getElementsByTagName("head")[0],
-      style = browsercontent.document.getElementById("link-target-finder-style"),
-      allTags = browsercontent.document.getElementsByTagName("a"),
-      foundLinks = 0;
-    
-    if (!style) {
-      style = browsercontent.document.createElement("link");
-      style.id = "link-target-finder-style";
-      style.type = "text/css";
-      style.rel = "stylesheet";
-      style.href = "chrome://eventlogger/skin/browserOverlay.css";
-      head.appendChild(style);
-    }
-
-    for (var i=0, il = allTags.length; i < il; i++) {
-      currentTag = allTags[i];
-      href = currentTag.getAttribute("href");
-      if (href && (href != "")) {
-        // check if its in the cache
-        href = ff_GetAbsoluteUrl(href, browsercontent.document.URL);
-        //href = elf.oHeaderInfo.getMovedLocation(href);
-        if (getCachedSize(href) > -1) {
-          //currentTag.className += ((currentTag.className.length > 0) ? " " : "") + "link-target-finder-selected";
-          currentTag.className += ((currentTag.className.length > 0) ? " " : "") + "external";
-          foundLinks++; // JJJ: log the number of links displayed?
-        }
-      }
-    }
-    
-    /*
-    // XXX: log how many links were found (might be too much info if this is run on a timer)
-    objectID = elf.oHeaderInfo.nextObjectID;
-    elf.oHeaderInfo.nextObjectID++;
-    var currTime = new Date;
-    elf.oHeaderInfo.events[objectID] =
-      new elf.EventObject(getUnixTime(currTime), elf.oHeaderInfo.windowID, objectID, browsercontent.document.URL, "HIGHLIGHTED_LINKS");
-    */
-    /*
-    if (foundLinks === 0) {
-      alert("No links found with a target attribute");
-    }
-    else {
-      alert("Found " + foundLinks + " links with a target attribute");
-    }*/
-  },
+  linkTargetFinder: function (browsercontent) {return;}, // AMR: this is not used in data collection
   
   onLocationChange:function(d,e,f){
     return 0;
@@ -282,6 +362,20 @@ elf.EventObject = function(eventtime, windowid, id, url, eventcode)
   this.URL = url;
   this.eventCode = eventcode;
   
+  //AMR:each event now associated with personal ids
+  if (arguments.length==8)
+  {
+    this.u_id1 = arguments[5];          //AMR: if caller passed credentials, such as reloading from log
+    this.u_id2 = arguments[6];
+    this.user_site = arguments[7];
+  }
+  else                                  //otherwise, read it from the common module.
+  {
+    this.u_id1 = elf.commonCred.user_id1;
+    this.u_id2 = elf.commonCred.user_id2;
+    this.user_site = elf.commonCred.user_site;
+  }
+  
   this.data = new Array();
 }
 elf.EventObject.prototype =
@@ -294,7 +388,6 @@ elf.EventObject.prototype =
     var flag = false;
     for (i in headers) {
       if(flag) {
-        //this.addRow(i + ": " + headers[i] + "\r\n");
         if (i == "Referer" ||
             i == "Content-Length" ||
             i == "Content-Type" ||
@@ -307,8 +400,13 @@ elf.EventObject.prototype =
         this.addRow(headers[i] + "\r\n"); //always allow first header through HTTP version/ response
         flag=true;
       }
-      //this.addRow((flag ? i + ": " : "") + headers[i] + "\r\n");
     }
+  },
+  
+  //AMR: mais add data to an mTabTime event. start time and end time given
+  mAddTabTimeData:function(mTabStart, mTabStop, mTabTitle){
+    var timeString= mTabStart + "|_|" + mTabStop + "|_|" + mTabTitle;
+    this.addRow(timeString + "\r\n");
   },
   
   // add a row to the request or response headers
@@ -323,29 +421,11 @@ elf.EventObject.prototype =
     data += this.windowID.toString() + " ";
     data += this.ID.toString() + " ";
     data += this.URL + " ";
-    data += this.eventCode + "\r\n";
-    
-    // XXX: this isn't strictly correct since the cache entry could have been evicted/replaced
-    // XXX: but it should be ok since the update time is set to about a minute.
-    // prior to saving update the content-length if it doesn't exist
-    /*
-    if(this.eventCode == "RESPONSE") {
-      var fileSize = this.getHeaderValue(false, "Content-Length");
-      if (!fileSize) {
-        cachedFileSize = getCachedSize(this.URL);
-        if(cachedFileSize > -1) {
-          this.addRow(false, "Content-Length: " + cachedFileSize + "\r\n");        
-        }
-      }
-    }*/
-    
-    // JJJ: just add the data rows if they exist
-    // get request/response/cached data rows
-    //if((this.eventCode == "REQUEST") ||
-    //   (this.eventCode == "RESPONSE") ||
-    //   (this.eventCode == "CACHED")) {
-      data += this.getData();
-    //}
+    data += this.eventCode + " ";
+    data += this.u_id1 + " ";           //AMR: We need to remove all spaces in IDs. Its used as delimeter
+    data += this.u_id2 + " ";
+    data += this.user_site + "\r\n";
+    data += this.getData();
     data += this.SEPSTRING;
     return data;
   },
@@ -401,17 +481,13 @@ elf.HeaderInfo = function()
   this.setIntPref(this.lpref, "nextWindowID", this.windowID+1);
   this.nextObjectID = 0;
   this.lastAckedObjectID = -1;
-  this.experimentPhase = this.getIntPref(this.lpref, "experimentPhase", 1); // default to 2 for prefetch BFS
+  this.experimentPhase = this.getIntPref(this.lpref, "experimentPhase", 1); // AMR:data collection
   this.version = 0.2; // needs to match the one in the install.rdf
 }
 elf.HeaderInfo.prototype =
 {
   rows: 0,
-
-//  LOGSERVER: "http://216.165.108.87:80", // beaker-7
-//  LOGSERVER: "http://216.165.108.94:80", // beaker-14
-  LOGSERVER: "http://192.168.2.2:8081", // server box
-//  LOGSERVER: "http://localhost:8080",
+  LOGSERVER: elf.updateServer,
   
   oDump: null,
   isCapturing: true,
@@ -449,7 +525,7 @@ elf.HeaderInfo.prototype =
   {
     try {
       // get extensions file path
-      const id = "jchen@cs.nyu.edu";
+      const id = elf.appId;
       var extension = Components.classes["@mozilla.org/extensions/manager;1"]
       .getService(Components.interfaces.nsIExtensionManager)
       .getInstallLocation(id)
@@ -460,7 +536,8 @@ elf.HeaderInfo.prototype =
       // create proper path for xml file
       var uncommittedLogFile = extension.path + "\\" + "uncommitted.log";
       // create component for file writing
-      var file = Components.classes["@mozilla.org/file/local;1"].createInstance(Components.interfaces.nsILocalFile);
+      var file = Components.classes["@mozilla.org/file/local;1"]
+	        .createInstance(Components.interfaces.nsILocalFile);
       file.initWithPath( uncommittedLogFile );
       //alert("creating file... " + uncommittedLogFile);
       if(file.exists() == false) //check to see if file exists
@@ -470,6 +547,7 @@ elf.HeaderInfo.prototype =
       
       // create file output stream and use write/create/truncate mode
       // 0x02 writing, 0x08 create file, 0x20 truncate length if exist JJJ: changed to append 0x10
+      // AMR: appending helps when user opens multiple windows and we write several times
       var stream = Components.classes["@mozilla.org/network/file-output-stream;1"].createInstance(Components.interfaces.nsIFileOutputStream);
       stream.init(file, 0x02 | 0x08 | 0x10 /* 0x20*/, 0666, 0);
       
@@ -492,7 +570,7 @@ elf.HeaderInfo.prototype =
   {
     try {
       // get extensions file path
-      const id = "jchen@cs.nyu.edu";
+      const id = elf.appId;
       var extension = Components.classes["@mozilla.org/extensions/manager;1"]
       .getService(Components.interfaces.nsIExtensionManager)
       .getInstallLocation(id)
@@ -512,10 +590,12 @@ elf.HeaderInfo.prototype =
       
       // create file output stream and use write/create/truncate mode
       // 0x02 writing, 0x08 create file, 0x20 truncate length if exist
-      var stream = Components.classes["@mozilla.org/network/file-input-stream;1"].createInstance(Components.interfaces.nsIFileInputStream);
+      var stream = Components.classes["@mozilla.org/network/file-input-stream;1"]
+	        .createInstance(Components.interfaces.nsIFileInputStream);
       stream.init(file, 0x01, 0444, null);
       
-      var sstream = Components.classes["@mozilla.org/scriptableinputstream;1"].createInstance(Components.interfaces.nsIScriptableInputStream);
+      var sstream = Components.classes["@mozilla.org/scriptableinputstream;1"]
+	        .createInstance(Components.interfaces.nsIScriptableInputStream);
       sstream.init(stream);
 
       var eventEntriesRead = 0;
@@ -527,19 +607,22 @@ elf.HeaderInfo.prototype =
       lines = data.split("\r\n");
       for (i in lines) {
         line = ff_trimString(lines[i]);
-        if(line.length > 0) {
+        if(line.length > 0) {       //AMR: the separator is an empty line with nothing on it. We start new entry there.
           if(initEntry == false) {
             initEntry = true;
             // parse the line
             chunks = line.split(" ");
-            if(chunks.length == 5) {
+            if(chunks.length == 8) {
               reqTime = parseInt(chunks[0]);
               reqWindowID = parseInt(chunks[1]);
               reqID = parseInt(chunks[2]);
               reqURL = chunks[3];
               reqOp = chunks[4];
-              
-              this.oldevents[reqID] = new elf.EventObject(reqTime, reqWindowID, reqID, reqURL, reqOp);
+              reqUserId1 = chunks[5];
+              reqUserId2 = chunks[6];
+              reqUserSite = chunks[7];
+                         
+              this.oldevents[reqID] = new elf.EventObject(reqTime, reqWindowID, reqID, reqURL, reqOp, reqUserId1, reqUserId2, reqUserSite);
               currentEntry = this.oldevents[reqID];
               currentEntry.timestamp = reqTime;
               if((reqOp == "REQUEST")) {
@@ -553,7 +636,7 @@ elf.HeaderInfo.prototype =
               }
             }
             else {
-              alert("Error != 5 chunks: " + line);
+              alert("Error != 8 chunks: " + line);
               // do nothing
             }
           }
@@ -574,7 +657,7 @@ elf.HeaderInfo.prototype =
       sstream.close();
       stream.close();
       
-      // delete the file after loading it
+      // delete the file after loading it AMR: we can write everything back again
       stream.init(file, 0x02 | 0x08 | 0x20, 0666, 0);
       stream.close();
       //alert("Entries Read: " + requestEntriesRead + ", " + responseEntriesRead + ", " + eventEntriesRead);
@@ -691,12 +774,12 @@ elf.HeaderInfo.prototype =
     var name = oHttp.URI.asciiSpec;
     
     // ignore server communication request/responses
-    if(name.indexOf(this.LOGSERVER + "/lastrequestid?WINDOWID=") === 0) //startswith
+    if(name.indexOf(this.LOGSERVER + "/lastrequestid?MACHINEID=") == 0) //startswith
     {
       // do nothing
       return;
     }
-    if(name.indexOf(this.LOGSERVER + "/log?WINDOWID=") === 0) //startswith
+    if(name.indexOf(this.LOGSERVER + "/log?MACHINEID=") == 0) //startswith
     {
       // do nothing
       return;
@@ -723,17 +806,18 @@ elf.HeaderInfo.prototype =
     //var origname = oHttp.originalURI.asciiSpec;
     
     // ignore server communication request/responses
-    if(name.indexOf(this.LOGSERVER + "/lastrequestid?WINDOWID=") === 0) //startswith
+    if(name.indexOf(this.LOGSERVER + "/lastrequestid?MACHINEID=") === 0) //startswith
     {
       // do nothing
       return;
     }
-    if(name.indexOf(this.LOGSERVER + "/log?WINDOWID=") === 0) //startswith
+    if(name.indexOf(this.LOGSERVER + "/log?MACHINEID=") === 0) //startswith
     {
       // do nothing
       return;
     }
     
+	/* AMR: no cache modification needed now
     // modify the expiration time of the response
     var currDate = new Date;
     var currTime = getUnixTime(currDate);  
@@ -741,6 +825,7 @@ elf.HeaderInfo.prototype =
     var expirationDate = new Date(newExpirationTime * 1000);
     oHttp.setResponseHeader("Expires", expirationDate.toString(), false);
     oHttp.setResponseHeader("Cache-Control", "max-age=31536000", false);
+	*/
     
     // Get the response headers
     var visitor = new elf.HeaderInfoVisitor(oHttp);
@@ -751,18 +836,7 @@ elf.HeaderInfo.prototype =
     var currObjectID = this.nextObjectID++;
     this.events[currObjectID] = new elf.EventObject(getUnixTime(currTime), this.windowID, currObjectID, name, "RESPONSE");
     var reqObj = this.events[currObjectID];
-    //var tempString = getUnixTime(reqObj.reqTime).toString() + " " + reqObj.ID.toString() + " " + reqObj.URL + " " + "REQUEST" + "\r\n";
-    // add the headers
     reqObj.addHeaders(headers);
-    //alert("Adding: " + reqObj.getString());
-    
-    /*
-    // 301 and 302's
-    movedLocation = reqObj.getHeaderValue("Location");
-    if(movedLocation) {
-      // define a mapping
-      this.addMovedLocation(name, movedLocation);
-    }*/
   },
 
   onExamineCachedResponse : function (oHttp)
@@ -771,12 +845,12 @@ elf.HeaderInfo.prototype =
     //var origname = oHttp.originalURI.asciiSpec;
     
     // ignore server communication request/responses
-    if(name.indexOf(this.LOGSERVER + "/lastrequestid?WINDOWID=") === 0) //startswith
+    if(name.indexOf(this.LOGSERVER + "/lastrequestid?MACHINEID=") === 0) //startswith
     {
       // do nothing
       return;
     }
-    if(name.indexOf(this.LOGSERVER + "/log?WINDOWID=") === 0) //startswith
+    if(name.indexOf(this.LOGSERVER + "/log?MACHINEID=") === 0) //startswith
     {
       // do nothing
       return;
@@ -791,15 +865,11 @@ elf.HeaderInfo.prototype =
     var currObjectID = this.nextObjectID++;
     this.events[currObjectID] = new elf.EventObject(getUnixTime(currTime), this.windowID, currObjectID, name, "CACHED");
     var reqObj = this.events[currObjectID];
-    //var tempString = getUnixTime(reqObj.reqTime).toString() + " " + reqObj.ID.toString() + " " + reqObj.URL + " " + "REQUEST" + "\r\n";
-    // add the headers
     reqObj.addHeaders(headers);
-    //alert("Adding: " + reqObj.getString());
   },
   
   addMovedLocation: function(originalURL, movedLocation) {
     this.movedLocationMap[originalURL] =  movedLocation;
-    //alert("Adding mapping: " + originalURL + " -> " +  movedLocation);
   },
   
   getMovedLocation: function(originalURL) {
@@ -839,22 +909,6 @@ elf.HeaderInfo.prototype =
     }
   },
   
-  /*
-  sleepStatus: function(aTopic) {
-    if (aTopic == "sleep_notification") {
-      var currTime = new Date;
-      this.events[this.nextObjectID] = new elf.EventObject(getUnixTime(currTime), this.windowID, this.nextObjectID, "-", "SLEEP");
-      this.nextObjectID++;
-      //this.setIntPref(this.lpref, "nextObjectID", this.nextObjectID);
-    }
-    else if (aTopic == "wake_notification") {
-      var currTime = new Date;
-      this.events[this.nextObjectID] = new elf.EventObject(getUnixTime(currTime), this.windowID, this.nextObjectID, "-", "WAKE");
-      this.nextObjectID++;
-      //this.setIntPref(this.lpref, "nextObjectID", this.nextObjectID);
-    }
-  }
-  */
   
   
  /****************************************************************************
@@ -878,7 +932,8 @@ elf.HeaderInfo.prototype =
 /****************************************************************************
  * Prefetching routines
  ****************************************************************************/
-var PrefetchService = Components.classes["@mozilla.org/prefetch-service;1"].getService(Components.interfaces.nsIPrefetchService);
+var PrefetchService = Components.classes["@mozilla.org/prefetch-service;1"]
+						.getService(Components.interfaces.nsIPrefetchService);
 var prefetchLinkQueue = new Array();
 
 function PrefetchObject(url, referer, tag, depth, priority) {
@@ -895,19 +950,7 @@ function sortByDepth(a, b) {
     var y = b.depth;
     return ((x < y) ? -1 : ((x > y) ? 1 : 0));
 }
-/*
-function sortByURL(a, b) {
-    var x = a.URL.toLowerCase();
-    var y = b.URL.toLowerCase();
-    return ((x < y) ? -1 : ((x > y) ? 1 : 0));
-}
 
-function sortByDepthValue(A){//using objects
-  initialize() //resets A to whatever is above
-  for (i in A) B.push({v:i,c:A[i]})
-  B.sort(function(x,y){return x.c-y.c})
-  return B;
-}*/
 
 function ff_makeURI(b){
     return Components.classes["@mozilla.org/network/io-service;1"].getService(Components.interfaces.nsIIOService).newURI(b,null,null)
@@ -916,311 +959,11 @@ function ff_makeURI(b){
 // add a prefetch link to the queue
 function queuePrefetchLink(url, referer, tag, depth) {
   prefetchLinkQueue[prefetchLinkQueue.length++] = new PrefetchObject(url, referer, tag, depth, 0);
-/* JJJ: THIS IS BROKEN
-  var tempObj = prefetchLinkQueue[url];
-  if(tempObj) {
-    if(tempObj.depth > depth) { // update with the lower depth and newer timestamp
-      prefetchLinkQueue[url] = new PrefetchObject(url, referer, tag, depth, 0);
-    }
-  }*/
 }
 
-function requeuePrefetchLinks() {
-  // phase 1: no link requeue
-  if (elf.oHeaderInfo.experimentPhase == 1) {
-    return;
-  }
-  
-  queuedPrefetchEnum = PrefetchService.enumerateQueue(true, false);
-  numQueuedPrefetch = 0;
-  while (queuedPrefetchEnum.hasMoreElements() ) {
-    queuedPrefetchEnum.getNext();
-    numQueuedPrefetch++;
-  }
-  // something is already in the queue don't bother re-queueing
-  // if that's the case it means the queue was never flushed
-  // BFS will only run upon a START/STOP pair of events that causes a queue flush then..
-  // might want to change this later when requeue is called on a timer
-  if (numQueuedPrefetch != 0) {
-    return;
-  }
-  
-  prefetchLinkQueue.sort(sortByDepth);
-  var allPrefetchedLinks = "";
-  for (i in prefetchLinkQueue) {
-    baseURL = prefetchLinkQueue[i].URL;
-    refererURL = prefetchLinkQueue[i].refererURL;
-    tag = prefetchLinkQueue[i].anchorTag;
-    depth = prefetchLinkQueue[i].depth;
-    if (getCachedSize(baseURL) > -1) { // check if the file is already in cache
-      // JJJ: at this point we want to do BFS for completed downloads if we're doing BFS
-      // phase 2: BFS
-      if (elf.oHeaderInfo.experimentPhase == 2) {
-      //if(true) { // always do bfs for now (JJJ: prefetch depth > 0 entry point, XXX: UNTESTED)
-        //alert("phase 2: regular prefetching");
-        if (depth < 2) { // check depth
-          // open the file
-          var htmlstring = readCachedFile(baseURL);
-          if(htmlstring.length > 0) {
-            // extract the links and embedded objects  var DOMPars = HTMLParser(htmlstring);
-            var DOMPars = HTMLParser(htmlstring);
-            //var links = new Array();
-            
-            /* JJJ: DEPRICATED - get all anchor links
-            var anchorTags = DOMPars.getElementsByTagName("a"), anchorTag;
-            try {
-              for (j in anchorTags) {
-                anchorTag = anchorTags[j];
-                if (!anchorTag) {
-                  continue;
-                }
-                
-                if((anchorTag = anchorTag.getAttribute("href")) && anchorTag.length > 4) {
-                  anchorTag = anchorTag.toLowerCase();
-                  if( !(anchorTag.indexOf("?") >= 0 || anchorTag == baseURL)){
-                    if( !(anchorTag.indexOf("logout") >= 0 || anchorTag.indexOf("logoff") >=0 )){
-                      if(anchorTag.indexOf("mailto:") > -1) {
-                       continue;
-                      }
-                      
-                      anchorTag = ff_GetAbsoluteUrl(anchorTag, baseURL);
-                      
-                      queuePrefetchLink(anchorTag, baseURL, anchorTags[j], depth+1);
-                      //alert("queueing for prefetch: " + anchorTag ); //+ "(" + anchorLinks[s].getAttribute("href") + " + " + basePage.location.href + ")");
-                      PrefetchService.prefetchURI(ff_makeURI(anchorTag),
-                                                  ff_makeURI(baseURL), 
-                                                  anchorTags[j], true);
-                      
-                      // queue download of anchor target
-                      // inherit depth+1, update priority based on some function
-                      allPrefetchedLinks += "Prefetch-Link: " + anchorTag + ", " + baseURL + ", " + (depth+1) + "\r\n";
-                    }
-                  }
-                }
-              }
-            }
-            catch(ex) {
-              // do nothing
-              // there's various reasons why the prefetchURI call will fail, ie. the request is already prefetched or queued...
-              // also, the DOMparser spews a bunch of crap, just ignore it
-              //alert(anchorTag +" exception at: \n" + ex)
-            }
-*/
-            // get all embedded objects including anchor links to further pages
-            // they are all assigned depth + 1
-            for (element in elementAttributes) {
-              //var element = et;
-              for (a in elementAttributes[element]) {
-                var attribute = elementAttributes[element][a];
-          
-                anchorTags = DOMPars.getElementsByTagName(element);
-                
-                //alert("Element: " + element + "\r\n" + "Attribute: " + attribute);
-                
-                /*
-                somestring = "anchorTags found:\r\n";
-                for (s in anchorTags) {
-                  somestring += anchorTags[s] + "\n";
-                }
-                alert(baseURL + ":\r\n" + somestring);
-                */
-                try {
-                  for (j in anchorTags) {
-                    anchorTag = anchorTags[j];
-                    if (!anchorTag) {
-                      continue;
-                    }
-                    
-                    if((anchorTag = anchorTag.getAttribute(attribute)) && anchorTag.length > 4) {
-                      
-                      anchorTag = anchorTag.toLowerCase();
-                      if( !(anchorTag.indexOf("?") >= 0 || anchorTag == baseURL)){
-                        if( !(anchorTag.indexOf("logout") >= 0 || anchorTag.indexOf("logoff") >=0 )){
-                          if(anchorTag.indexOf("mailto:") > -1) {
-                            continue;
-                          }
-                          
-                          anchorTag = ff_GetAbsoluteUrl(anchorTag, baseURL);
-                          //alert("Element: " + element + "\r\n" + "Attribute: " + attribute + "\r\n" + anchorTag);
-                          queuePrefetchLink(anchorTag, baseURL, anchorTags[j], depth+1);
-                          //alert("queueing for prefetch: " + anchorTag ); //+ "(" + anchorLinks[s].getAttribute("href") + " + " + basePage.location.href + ")");
-                          PrefetchService.prefetchURI(ff_makeURI(anchorTag),
-                                                      ff_makeURI(baseURL), 
-                                                      anchorTags[j], true);
-                          
-                          // queue download of anchor target
-                          // inherit depth+1, update priority based on some function
-                          allPrefetchedLinks += "Prefetch-Link: " + anchorTag + ", " + baseURL + ", " + (depth+1) + "\r\n";
-                        }
-                      }
-                    }
-                  }
-                }
-                catch(ex) {
-                  // parser spews a bunch of crap, just ignore it
-                  //alert(anchorTag +" exception at: \n" + ex)
-                }
+function requeuePrefetchLinks() { return;}		//AMR:not used in data collection
 
-              }
-            }
-
-          }
-        }
-      }
-      else if (elf.oHeaderInfo.experimentPhase == 3) {
-        // phase 3: fancy prefetching implementation goes here
-        if (depth < 2) { // check depth
-          // open the file
-          var htmlstring = readCachedFile(baseURL);
-          if(htmlstring.length > 0) {
-            // extract the links and embedded objects  var DOMPars = HTMLParser(htmlstring);
-            var DOMPars = HTMLParser(htmlstring);
-            //var links = new Array();
-            
-            // get all embedded objects including anchor links to further pages
-            // they are all assigned depth + 1
-            for (element in elementAttributes) {
-              //var element = et;
-              for (a in elementAttributes[element]) {
-                var attribute = elementAttributes[element][a];
-          
-                anchorTags = DOMPars.getElementsByTagName(element);
-                
-                //alert("Element: " + element + "\r\n" + "Attribute: " + attribute);
-                
-                /*
-                somestring = "anchorTags found:\r\n";
-                for (s in anchorTags) {
-                  somestring += anchorTags[s] + "\n";
-                }
-                alert(baseURL + ":\r\n" + somestring);
-                */
-                try {
-                  for (j in anchorTags) {
-                    anchorTag = anchorTags[j];
-                    if (!anchorTag) {
-                      continue;
-                    }
-                    
-                    if((anchorTag = anchorTag.getAttribute(attribute)) && anchorTag.length > 4) {
-                      
-                      anchorTag = anchorTag.toLowerCase();
-                      if( !(anchorTag.indexOf("?") >= 0 || anchorTag == baseURL)){
-                        if( !(anchorTag.indexOf("logout") >= 0 || anchorTag.indexOf("logoff") >=0 )){
-                          if(anchorTag.indexOf("mailto:") > -1) {
-                            continue;
-                          }
-                          
-                          anchorTag = ff_GetAbsoluteUrl(anchorTag, baseURL);
-                          //alert("Element: " + element + "\r\n" + "Attribute: " + attribute + "\r\n" + anchorTag);
-                          queuePrefetchLink(anchorTag, baseURL, anchorTags[j], depth+1);
-                          //alert("queueing for prefetch: " + anchorTag ); //+ "(" + anchorLinks[s].getAttribute("href") + " + " + basePage.location.href + ")");
-                          PrefetchService.prefetchURI(ff_makeURI(anchorTag),
-                                                      ff_makeURI(baseURL), 
-                                                      anchorTags[j], true);
-                          
-                          // queue download of anchor target
-                          // inherit depth+1, update priority based on some function
-                          allPrefetchedLinks += "Prefetch-Link: " + anchorTag + ", " + baseURL + ", " + (depth+1) + "\r\n";
-                        }
-                      }
-                    }
-                  }
-                }
-                catch(ex) {
-                  // parser spews a bunch of crap, just ignore it
-                  //alert(anchorTag +" exception at: \n" + ex)
-                }
-
-              }
-            }
-
-          }
-        }
-      }
-      else {
-        //alert("phase " + elf.oHeaderInfo.experimentPhase);
-      }
-      delete prefetchLinkQueue[i];
-    }
-    else {
-      try {
-        PrefetchService.prefetchURI(ff_makeURI(baseURL),
-                                    ff_makeURI(refererURL), 
-                                    tag, true); // JJJ: true means allow query string links (i think) //, true, false); JJJ: not sure we need this not in the .cpp of the PrefetchService
-        //allPrefetchedLinks += "Re-queued: " + baseURL + "\r\n";
-      }
-      catch(ex) {
-        // do nothing
-        // there's various reasons why the prefetchURI call will fail, ie. the request is already prefetched or queued...
-      }
-    }
-  }
-        
-  if (allPrefetchedLinks.length > 0) {
-    //alert(allPrefetchedLinks);
-    var currTime = new Date;
-    var currObjectID = elf.oHeaderInfo.nextObjectID++;
-    elf.oHeaderInfo.events[currObjectID] = new elf.EventObject(getUnixTime(currTime), elf.oHeaderInfo.windowID, currObjectID, baseURL, "PREFETCH_REQUEUE");
-    var reqObj = elf.oHeaderInfo.events[currObjectID];
-    reqObj.addRow(allPrefetchedLinks);
-  }
-}
-
-function readCachedFile(url) {
-  var cacheService = Components.classes["@mozilla.org/network/cache-service;1"].getService(Components.interfaces.nsICacheService);
-  
-  var data = "";
-  try {
-    var cacheSession = cacheService.createSession('HTTP', 0, true);
-    var cacheEntryDescriptor = cacheSession.openCacheEntry(url, Components.interfaces.nsICache.ACCESS_READ, false);
-    var parseable = false;
-    if(cacheEntryDescriptor) {
-      if(cacheEntryDescriptor.dataSize) {
-        // check parseable
-        headers = cacheEntryDescriptor.getMetaDataElement("response-head");
-        if(headers) {
-          headerchunks = headers.split("\r\n");
-          //alert(headerchunks.length.toString() + " -\n" + headers);
-          for(s in headerchunks) {
-            if(headerchunks[s].indexOf("Content-Type") > -1 &&
-              headerchunks[s].indexOf("html") > -1){ // only html are parseable for now, should cover aspx too?
-              parseable = true;
-            }
-          }
-        }
-        
-        if (parseable) {
-          var stream = cacheEntryDescriptor.openInputStream(0);
-          
-          // create file output stream and use read mode
-          // 0x02 writing, 0x08 create file, 0x20 truncate length if exist
-          //var stream = Components.classes["@mozilla.org/network/file-input-stream;1"].createInstance(Components.interfaces.nsIFileInputStream);
-          //stream.init(cacheEntryDescriptor.file, 0x01, 0444, null);
-          
-          var sstream = Components.classes["@mozilla.org/scriptableinputstream;1"].createInstance(Components.interfaces.nsIScriptableInputStream);
-          sstream.init(stream);
-          
-          var data = sstream.read(sstream.available());
-          
-          //sstream.close();
-          stream.close();
-        }
-        else {
-          // for debugging really
-          //alert("not parseable: " + url);
-        }
-      }
-    }
-    
-    cacheEntryDescriptor.close();
-  } catch (ex) {
-    // do nothing
-    alert("error: " + url + "\r\n" + ex.toString());
-  }
-  
-  return data;
-}
+function readCachedFile(url) { return "";}      //AMR:not used in data collection
 
 function isParseable(contentType) {
   if (contentType.indexOf("htm") > -1 ||
@@ -1229,179 +972,9 @@ function isParseable(contentType) {
   }
   return false;
 }
-/*
-// helper function that checks if a URL is parseable
-function isParseable(url) {
-  var fileExtensionStartPos = anchorTag.length - 4;
-  if(anchorTag.indexOf(".htm") == fileExtensionStartPos ||
-     anchorTag.indexOf(".html") == fileExtensionStartPos-1 ||
-     anchorTag.indexOf(".asp") == fileExtensionStartPos-1 ||
-     anchorTag.indexOf(".aspx") == fileExtensionStartPos-1 ||
-     anchorTag.indexOf(".xhtml") == fileExtensionStartPos-1) {
-     //anchorTag.indexOf(".jpg") == fileExtensionStartPos ||
-     //anchorTag.indexOf(".gif") == fileExtensionStartPos ||
-     //anchorTag.indexOf(".png") == fileExtensionStartPos ||
-     //anchorTag.indexOf(".jpeg") == fileExtensionStartPos-1 ||
-     //anchorTag.indexOf(".txt") == fileExtensionStartPos ||
-     //anchorTag.indexOf(".text") == fileExtensionStartPos-1 ||
-     //anchorTag.indexOf(".xml") == fileExtensionStartPos ||
-     //anchorTag.indexOf(".pdf") == fileExtensionStartPos) {
-    return true;
-  }
-  return false;
-}
-*/
-
-// helper that parses a html string into a DOM
-function HTMLParser(aHTMLString){
-  var html = document.implementation.createDocument("http://www.w3.org/1999/xhtml", "html", null),
-    body = document.createElementNS("http://www.w3.org/1999/xhtml", "body");
-  html.documentElement.appendChild(body);
-
-  body.appendChild(Components.classes["@mozilla.org/feed-unescapehtml;1"]
-    .getService(Components.interfaces.nsIScriptableUnescapeHTML)
-    .parseFragment(aHTMLString, false, null, body));
-
-  return body;
-}
-
-// embedded elements organized by HTML version
-var elementAttributes = new Array();
-// 2.0
-elementAttributes["a"] = ["href"];
-elementAttributes["base"] = ["href"];
-elementAttributes["img"] = ["src"];
-elementAttributes["link"] = ["href"];
-// 3.2
-elementAttributes["applet"] = ["code", "codebase", "archive", "object"];
-//elementAttributes["applet"] = "codebase";
-elementAttributes["body"] = ["background"];
-elementAttributes["input"] = ["src"];
-// 4.01
-//elementAttributes["applet"] = "archive";
-//elementAttributes["applet"] = "object";
-elementAttributes["frame"] = ["src"];
-elementAttributes["head"] = ["profile"];
-elementAttributes["iframe"] = ["src"];
-elementAttributes["object"] = ["archive", "data"];
-//elementAttributes["object"] = "data";
-elementAttributes["script"] = ["src"];
-// 5.0
-elementAttributes["audio"] = ["src"];
-elementAttributes["command"] = ["icon"];
-elementAttributes["embed"] = ["src"];
-elementAttributes["event-source"] = ["src"];
-elementAttributes["source"] = ["src"];
-elementAttributes["video"] = ["src", "poster"];
-//elementAttributes["video"] = "poster";
 
 
-function doPrefetch(t, s){
-    // phase 1: no prefetching
-    if (elf.oHeaderInfo.experimentPhase == 1) {
-      return;
-    }
-    
-    var basePage = t.originalTarget;
-    if(basePage.location.href.indexOf("http://") == 0){
-      //var whitelist = PreferencesService.getCharPref("extensions.fasterfox.whitelist").split(","),o=p.length;
-      var anchorTags = basePage.getElementsByTagName("a"), anchorTag;//,m;
-      var numAnchorTags = anchorTags.length > 100 ? 100 : anchorTags.length;
-      if(s == null || s <= 0){
-        s=0;
-      }
-      //s=s;
-      var allPrefetchedLinks = "";
-      t:for( ; s < numAnchorTags; s++){
-        if((anchorTag = anchorTags[s].getAttribute("href").toLowerCase()) && anchorTag.length > 4){
-          if( !(anchorTag.indexOf("?") >= 0 || anchorTag == basePage.location.href)){
-            if( !(anchorTag.indexOf("logout") >= 0 || anchorTag.indexOf("logoff") >=0 )){
-              if(anchorTag.indexOf("mailto:") > -1) {
-               continue t;
-              }
-              /*
-              var fileExtensionStartPos = anchorTag.length - 4;
-              if(anchorTag.indexOf(".htm") == fileExtensionStartPos ||
-                 anchorTag.indexOf(".html") == fileExtensionStartPos-1 ||
-                 anchorTag.indexOf(".jpg") == fileExtensionStartPos ||
-                 anchorTag.indexOf(".gif") == fileExtensionStartPos ||
-                 anchorTag.indexOf(".png") == fileExtensionStartPos ||
-                 anchorTag.indexOf(".jpeg") == fileExtensionStartPos-1 ||
-                 anchorTag.indexOf(".txt") == fileExtensionStartPos ||
-                 anchorTag.indexOf(".text") == fileExtensionStartPos-1 ||
-                 anchorTag.indexOf(".xml") == fileExtensionStartPos ||
-                 anchorTag.indexOf(".pdf") == fileExtensionStartPos) {
-              */
-                  anchorTag = ff_GetAbsoluteUrl(anchorTag, basePage.location.href);
-                  /* // whitelisting
-                  for(m = 0; m < o; m++){
-                      if(whitelist[m].length>0&&anchorTag.indexOf(whitelist[m])>=0){
-                          continue t;
-                      }
-                  }*/
-                  /* // opt out "robots.txt"
-                  anchorTag = ff_IsSiteOptOut(anchorTag,t,s);
-                  if(!anchorTag){
-                      if(anchorTag == -1){
-                        return
-                      }*/
-                      try{
-                        var absoluteURL = ff_GetAbsoluteUrl(anchorTags[s].getAttribute("href"), basePage.location.href);
-                        if (absoluteURL) {
-                          if(absoluteURL.indexOf("https://") === 0) //startswith
-                          {
-                            // do nothing
-                            //return;
-                          }
-                          else{
-                            // always add it to the queue so even if the page is cached we can do further crawling
-                            // log it too, just don't bother actually fetching it since its already cached
-                            queuePrefetchLink(absoluteURL, basePage.location.href, anchorTags[s], 0);
-                            allPrefetchedLinks += "Prefetch-Link: " + absoluteURL + ", " + basePage.location.href + ", 0" + "\r\n";
-                            if(getCachedSize(absoluteURL) < 0) { // prefetch regardless of whether it already exists
-                              //alert("queueing for prefetch: " + absoluteURL ); //+ "(" + anchorTags[s].getAttribute("href") + " + " + basePage.location.href + ")");
-                              PrefetchService.prefetchURI(ff_makeURI(absoluteURL),
-                                                          ff_makeURI(basePage.location.href), 
-                                                          anchorTags[s], true); // JJJ: true means allow query string links (i think) //, true, false); JJJ: not sure we need this not in the .cpp of the PrefetchService
-                              // should log that we're prefetching this URL... the successful requests appear in the log.. idk
-                              
-                              //allPrefetchedLinks += "Prefetch-Link: " + absoluteURL + "\r\n";
-                            }
-                          }
-                        }
-                      }catch(k)
-                      {
-                        // there's various reasons why the prefetchURI call will fail, ie. the request is already prefetched or queued...
-                        // do nothing
-                      }
-                  //}
-              //}
-            }
-          }
-        }
-      }
-      
-      /*
-      queuedPrefetchEnum = PrefetchService.enumerateQueue(true, false);
-      numQueuedPrefetch = 0;
-      while (queuedPrefetchEnum.hasMoreElements() ) {
-        queuedPrefetchEnum.getNext();
-        numQueuedPrefetch++;
-      }
-      alert("queue length: " + numQueuedPrefetch);
-      */
-      
-      if (allPrefetchedLinks.length > 0) {
-        //alert("Prefetching: \r\n" + allPrefetchedLinks);
-        var currTime = new Date;
-        var currObjectID = elf.oHeaderInfo.nextObjectID++;
-        elf.oHeaderInfo.events[currObjectID] = new elf.EventObject(getUnixTime(currTime), elf.oHeaderInfo.windowID, currObjectID, basePage.location.href, "PREFETCH");
-        var reqObj = elf.oHeaderInfo.events[currObjectID];
-        reqObj.addRow(allPrefetchedLinks);
-      }
-    }
-  //}
-}
+function doPrefetch(t, s){ return;}			//AMR: not used
 
 function ff_GetAbsoluteUrl(url, baseurl) {
     if(url && url.indexOf("://") > 0 ){
@@ -1423,43 +996,12 @@ function ff_GetAbsoluteUrl(url, baseurl) {
     return baseurl + url;
 }
 
-/*
-function ff_GetBaseURL(d){
-    var c=d.indexOf("://")+3;
-    c=d.indexOf("/",c);
-    if(c<0){c=d.length}
-    return d.substring(0,c)
-}*/
-
-/*
-function ff_IsSiteOptOut(g,c,j){
-    var i=ff_GetBaseURL(g)+"/robots.txt";
-    for(g=0;g<robotsCacheMax;g++){
-        if(i==robotsCache[g]){
-            return optOut[g]
-        }
-    }
-    var h=new XMLHttpRequest;h.open("GET",i,true);
-    h.onreadystatechange=function(){
-        if(h.readyState==4){
-            if(h.status==200){
-                var a=h.responseText.toLowerCase().indexOf("fasterfox")>=0;
-                robotsCacheTop=(robotsCacheTop+1)%robotsCacheMax;
-                robotsCache[robotsCacheTop]=i;
-                optOut[robotsCacheTop]=a
-            }
-        }
-    };
-    h.send(null);
-    return -1
-}*/
-
-
 /****************************************************************************
  * Cache size setting and getting methods
  ****************************************************************************/
 function set_cache_settings() {
-  var pref_service = Components.classes["@mozilla.org/preferences-service;1"].getService(Components.interfaces.nsIPrefService);
+  var pref_service = Components.classes["@mozilla.org/preferences-service;1"]
+      .getService(Components.interfaces.nsIPrefService);
   branch = pref_service.getBranch( 'browser.cache.' );
   // enable the disk cache
   branch.setBoolPref( 'disk.enable', true);
@@ -1477,21 +1019,8 @@ function set_cache_settings() {
 function cs_updated_stat( type, aDeviceInfo ) {
   var current = round_memory_usage( aDeviceInfo.totalSize );
   var max = round_memory_usage( aDeviceInfo.maximumSize );
-  //var current = round_memory_usage( aDeviceInfo.totalSize/1024/1024 );
-  //var max = round_memory_usage( aDeviceInfo.maximumSize/1024/1024 );
-  
-  if ( type =='memory' ) {
-    // JJJ: not logging memory for now
-    // log this
-    /*
-    objectID = elf.oHeaderInfo.nextObjectID;
-    elf.oHeaderInfo.nextObjectID++;
-    var currTime = new Date;
-    elf.oHeaderInfo.events[objectID] =
-      new elf.EventObject(getUnixTime(currTime), elf.oHeaderInfo.windowID, objectID, url, "STOP_LOAD_PAGE");
-    */
-  }
-  else if ( type == 'disk' ) {
+
+  if ( type == 'disk' ) {
     // log this
     objectID = elf.oHeaderInfo.nextObjectID;
     elf.oHeaderInfo.nextObjectID++;
@@ -1499,14 +1028,6 @@ function cs_updated_stat( type, aDeviceInfo ) {
     elf.oHeaderInfo.events[objectID] =
       new elf.EventObject(getUnixTime(currTime), elf.oHeaderInfo.windowID, objectID, current.toString(), "CACHE_SIZE");
   }
-/*
-  // Now, update the status bar label...
-  var wm = Components.classes["@mozilla.org/appshell/window-mediator;1"]
-      .getService(Components.interfaces.nsIWindowMediator);
-  var win = wm.getMostRecentWindow("navigator:browser");
-  if (win) {
-      win.document.getElementById(cs_id).setAttribute('value', current + " MB / " + max + " MB " );
-  }*/
 }
 
 function round_memory_usage( memory ) {
@@ -1534,10 +1055,7 @@ function update_cache_status() {
 
 function updateTimer(myObject){
   var b;
-  if(Finished){
-      //b=StopTime.getTime()-StartTime.getTime();
-      //document.getElementById("fasterfox-label").value=ff_TimeStr(b,true)
-  }
+  if(Finished){  }
   else{
     // get the per-timer statistics
     // cache usage
@@ -1585,7 +1103,6 @@ function updateTimer(myObject){
             var currObjectID = elf.oHeaderInfo.nextObjectID++;
             elf.oHeaderInfo.events[currObjectID] = new elf.EventObject(getUnixTime(currTime), elf.oHeaderInfo.windowID, currObjectID, newPhase.toString(), "NEW_PHASE");
             var reqObj = elf.oHeaderInfo.events[currObjectID];
-            reqObj.addRow(allPrefetchedLinks);
           }
           
           sendClient = new XMLHttpRequest();
@@ -1648,26 +1165,17 @@ function updateTimer(myObject){
 
     // timing
     CurrentTime = new Date;
-    //elapsed=CurrentTime.getTime()-StartTime.getTime();
-    //document.getElementById("fasterfox-label").value=ff_TimeStr(b,false);
-    
-    //setTimeout("updateTimer()", 20000);
-    setTimeout("updateTimer()", 300000);
+    setTimeout("updateTimer()", elf.updateEvery);   //AMR: updates the server every N minutes
   }
 }
 
 function checkIfOnline(myObject){
-  prefsService = Components.classes["@mozilla.org/preferences-service;1"].getService(Components.interfaces.nsIPrefBranch);
-  ioService = Components.classes["@mozilla.org/network/io-service;1"].getService(Components.interfaces.nsIIOService2);
-  if(Finished){
-      //b=StopTime.getTime()-StartTime.getTime();
-      //document.getElementById("fasterfox-label").value=ff_TimeStr(b,true)
-  }
-  else{
-    // get the per-timer statistics
-    // cache usage
-    //update_cache_status();
-    
+  prefsService = Components.classes["@mozilla.org/preferences-service;1"]
+         .getService(Components.interfaces.nsIPrefBranch);
+  ioService = Components.classes["@mozilla.org/network/io-service;1"]
+         .getService(Components.interfaces.nsIIOService2);
+
+  if(!Finished){
     var client = new XMLHttpRequest();
     var objectPointer = elf.oHeaderInfo;
     
@@ -1677,31 +1185,22 @@ function checkIfOnline(myObject){
       {
         isOffline = prefsService.getBoolPref("browser.offline");
         if(client.status == 200) {
-          /*
-          // set online
-          if(isOffline) {
-            //ioService.offline = false;
-            prefsService.setBoolPref('browser.offline', false); // I don't think this preference actually does anything except indicate, the ioService one actually affects where requests go
-            alert("online: " + client.client.getAllResponseHeaders());
-          }
-          */
+
         }
         else {
           // set offline
           if(!isOffline) {
             ioService.offline = true;
             prefsService.setBoolPref('browser.offline', true);
-            //alert("offline.");
           }
         }
       }
     };
-  
-    //client.setRequestHeader("Cache-Control", "no-cache");
+
     client.open("HEAD", "http://www.google.com", true); 
     client.send(null);
     
-    setTimeout("checkIfOnline()", 60000);
+    setTimeout("checkIfOnline()", 60000);				//AMR:Check if online every M minutes
   }
 }
 
@@ -1725,36 +1224,9 @@ function startTimer(myObject){
   Started=true;
   
   // initialize the preference setting to avoid exception
-  prefsService = Components.classes["@mozilla.org/preferences-service;1"].getService(Components.interfaces.nsIPrefBranch);
+  prefsService = Components.classes["@mozilla.org/preferences-service;1"]
+           .getService(Components.interfaces.nsIPrefBranch);
   prefsService.setBoolPref('browser.offline', false);
-}
-
-// get the cached file size of a url, -1 if it doesn't exist
-function getCachedSize(url)
-{
-  var fileSize = -1;
-  var cacheService = Components.classes["@mozilla.org/network/cache-service;1"].getService(Components.interfaces.nsICacheService);
-  try {
-    var cacheSession = cacheService.createSession('HTTP',0,true);
-    //var cacheSession = cacheService.createSession('HTTP-memory-only',1,true);
-    var cacheEntryDescriptor = cacheSession.openCacheEntry(url, Components.interfaces.nsICache.ACCESS_READ, false);
-    if(cacheEntryDescriptor) {
-      fileSize = cacheEntryDescriptor.dataSize;
-      //alert(url + "\nExpires: " + new Date(cacheEntryDescriptor.expirationTime * 1000));
-      //alert(fileSize);
-      /*&
-      var expiryTime = cacheEntryDescriptor.expirationTime;
-      var currDate = new Date();
-      var currTime = getUnixTime(currDate);
-      if (expiryTime < currTime) {
-        alert(url + "\nExpires: " + new Date(expiryTime * 1000));
-      }*/
-      cacheEntryDescriptor.close();
-    }
-  } catch (ex) {
-    // do nothing
-  }
-  return fileSize;
 }
 
 /****************************************************************************
@@ -1874,16 +1346,6 @@ elf.HeaderInfoVisitor.prototype =
     if (note) this.headers["NOTE"] = note;
     this.oHttp.visitRequestHeaders(this);
 
-/*
-    // There may be post data in the request
-    var postData = this.getPostData(this.oHttp);
-    if (postData) {
-      postData.visitPostHeaders(this);
-      this.visitHeader("POSTDATA",postData);
-    } else {
-      this.visitHeader("POSTDATA",null);
-    }
-*/
     return this.headers;
   },
   visitResponse : function ()
@@ -1892,11 +1354,6 @@ elf.HeaderInfoVisitor.prototype =
     this.headers = new Array();
     this.headers["RESPONSE"] = "HTTP/" + ver + " " + this.oHttp.responseStatus 
                     + " " + this.oHttp.responseStatusText;
-    //this.headers["loadGroup"] = this.oHttp.loadGroup
-    //this.headers["owner"] = this.oHttp.owner
-    //this.headers["notificationCallbacks"] = this.oHttp.notificationCallbacks
-    //if (this.oHttp.loadGroup) this.headers["loadGroup.ncb"] = this.oHttp.loadGroup.notificationCallbacks
-    //this.headers["Cache-Control"] = "public,max-age=604800";
     this.oHttp.visitResponseHeaders(this);
     return this.headers;
   }
@@ -1928,12 +1385,3 @@ elf.saveAs = function(data, title)
     alert(ex);
   }
 }
-/*
-XULSchoolChrome.BrowserOverlay = {
-  sayHello : function(aEvent) {
-    let stringBundle = document.getElementById("xulschoolhello-string-bundle");
-    let message = stringBundle.getString("xulschoolhello.greeting.label");
-
-    window.alert(message);
-  }
-};*/

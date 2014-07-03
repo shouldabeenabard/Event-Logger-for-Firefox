@@ -1,0 +1,29 @@
+<?xml version="1.0"?>
+<?xml-stylesheet href="chrome://global/skin/global.css" type="text/css"?>
+
+<!DOCTYPE overlay SYSTEM
+  "chrome://eventlogger/locale/browserOverlay.dtd">
+  
+<dialog id="mpersonalprompt" title="Information" name="whatisthis"
+xmlns="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul"
+buttons="accept,cancel"
+onload="return JSNamespace.MaisPrompts.credLoad(event);"
+ondialogaccept="return JSNamespace.MaisPrompts.gaveCred(event);"  
+ondialogcancel="return JSNamespace.MaisPrompts.cancelCred(event);">
+
+
+<label id="mp_main_label" value="&xulschoolhello.loginGreet.label;" />
+<label id="mp_error_label" style="color:red"/>
+<groupbox caption="Information Entry Box">
+	<label id="user_id1_caption" control="user_id1" value="&xulschoolhello.userId1Name.label;"/>
+	<textbox id="user_id1"/>
+	<label id="user_id2_caption" control="user_id2" value="&xulschoolhello.userId2Name.label;"/>
+	<textbox id="user_id2"/>
+</groupbox>
+
+<script type="application/x-javascript"
+src="chrome://eventlogger/content/mprompt.js">
+</script>	
+
+
+</dialog>
